@@ -10,7 +10,7 @@ from einops import reduce, rearrange, repeat
 import numpy as np
 
 from .dilated_conv import DilatedConvEncoder
-from .lstm import LSTMEncoder
+# from .lstm import LSTMEncoder
 
 
 def generate_continuous_mask(B, T, n=5, l=0.1):

@@ -1,10 +1,14 @@
+import os
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
+# Define the root directory dynamically
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def load_forecast_npy(name, univar=False):
-    data = np.load(f'datasets/{name}.npy')    
+    # Use absolute path for datasets
+    data = np.load(os.path.join(ROOT_DIR, 'datasets', f'{name}.npy'))
     if univar:
         data = data[: -1:]
         
@@ -19,6 +23,7 @@ def load_forecast_npy(name, univar=False):
     pred_lens = [24, 48, 96, 288, 672]
     return data, train_slice, valid_slice, test_slice, scaler, pred_lens, 0
 
+
 def _get_time_features(dt):
     return np.stack([
         dt.minute.to_numpy(),
@@ -30,8 +35,10 @@ def _get_time_features(dt):
         dt.isocalendar().week.to_numpy(),
     ], axis=1).astype(np.float64)
 
+
 def load_forecast_csv(name, univar=False):
-    data = pd.read_csv(f'datasets/{name}.csv', index_col='date', parse_dates=True)
+    # Use absolute path for datasets
+    data = pd.read_csv(os.path.join(ROOT_DIR, 'datasets', f'{name}.csv'), index_col='date', parse_dates=True)
     dt_embed = _get_time_features(data.index)
     n_covariate_cols = dt_embed.shape[-1]
 
@@ -47,7 +54,7 @@ def load_forecast_csv(name, univar=False):
         else:
             data = data.iloc[:, -1:]
 
-    # 划分数据集， 训练集-验证集-测试集
+    # Dataset splitting logic remains unchanged
     data = data.to_numpy()
     if name == 'ETTh1' or name == 'ETTh2':
         train_slice = slice(None, 12 * 30 * 24)
@@ -88,6 +95,3 @@ def load_forecast_csv(name, univar=False):
         pred_lens = [24, 48, 96, 288, 672]
 
     return data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_covariate_cols
-
-
-

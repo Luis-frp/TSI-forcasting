@@ -2,7 +2,10 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from datautils import ROOT_DIR 
 from sklearn.preprocessing import MinMaxScaler
+import os
+
 
 
 
@@ -32,7 +35,9 @@ class NonlinearICA(nn.Module):
 
 def load_and_preprocess_ica_data(name, univar=False):
     #df = pd.read_csv(file_path, index_col='date', parse_dates=True)
-    df = pd.read_csv(f'datasets/{name}.csv', index_col='date', parse_dates=True)
+    # Use absolute path for datasets
+    dataset_path = os.path.join(ROOT_DIR, 'datasets', f'{name}.csv')
+    df = pd.read_csv(dataset_path, index_col='date', parse_dates=True)
 
     n_total = len(df)
 

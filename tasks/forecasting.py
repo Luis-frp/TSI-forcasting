@@ -115,11 +115,11 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
         test_labels = test_labels.reshape(ori_shape)
 
         if test_data.shape[0] > 1:
-            test_pred_inv = scaler.inverse_transform(test_pred.swapaxes(0, 3)).swapaxes(0, 3)
-            test_labels_inv = scaler.inverse_transform(test_labels.swapaxes(0, 3)).swapaxes(0, 3)
+            test_pred_inv = scaler.inverse_transform(test_pred.swapaxes(0, 3).reshape(-1, test_pred.shape[3])).reshape(test_pred.shape)
+            test_labels_inv = scaler.inverse_transform(test_labels.swapaxes(0, 3).reshape(-1, test_labels.shape[3])).reshape(test_labels.shape)
         else:
-            test_pred_inv = scaler.inverse_transform(test_pred)
-            test_labels_inv = scaler.inverse_transform(test_labels)
+            test_pred_inv = scaler.inverse_transform(test_pred.reshape(-1, test_pred.shape[-1])).reshape(test_pred.shape)
+            test_labels_inv = scaler.inverse_transform(test_labels.reshape(-1, test_labels.shape[-1])).reshape(test_labels.shape)
         out_log[pred_len] = {
             'norm': test_pred,
             'raw': test_pred_inv,
