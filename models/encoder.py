@@ -11,6 +11,8 @@ import numpy as np
 
 from .dilated_conv import DilatedConvEncoder
 # from .lstm import LSTMEncoder
+from models.trasnformer_encoder import TransformerEncoder  # sua implementação com PositionalEncoding
+
 
 
 def generate_continuous_mask(B, T, n=5, l=0.1):
@@ -33,7 +35,7 @@ def generate_continuous_mask(B, T, n=5, l=0.1):
 def generate_binomial_mask(B, T, p=0.5):
     return torch.from_numpy(np.random.binomial(1, p, size=(B, T))).to(torch.bool)
 
-
+### AQUI É ONDE TEMOS O FFT APLICAÇÃO DA TRANSFORMADA DE FOURIER
 class BandedFourierLayer(nn.Module):
     def __init__(self, in_channels, out_channels, band, num_bands, length=201):
         super().__init__()
@@ -101,7 +103,7 @@ class NonlinearICA(nn.Module):
         return self.encoder(x)
 
 
-
+# AQUI É ONDE ESTA ACONTECENDO A EXTRAÇÃO DA TENDENCIA E SAZONALIDADE
 class TSIEncoder(nn.Module):
     def __init__(self, input_dims, output_dims,
                  kernels: List[int],
@@ -194,3 +196,107 @@ class TSIEncoder(nn.Module):
 
         return trend, self.repr_dropout(season)
         #return trend
+
+
+# MODIFICAÇÃO APLICANDO UMA CAMADA TRANSFORMER SOBRE A TENDÊNCIA
+class TSIEncoderTransformerTrend(nn.Module):
+    def __init__(self, input_dims, output_dims,
+                 kernels,
+                 length: int,
+                 hidden_dims=64, depth=10,
+                 mask_mode='binomial',
+                 transformer_heads=4,
+                 transformer_depth=2,
+                 transformer_dropout=0.1):
+        super().__init__()
+
+        self.input_dims = input_dims
+        self.output_dims = output_dims
+        self.hidden_dims = hidden_dims
+        self.mask_mode = mask_mode
+        self.component_dims = output_dims // 2
+
+        # Projeção inicial
+        self.input_fc = nn.Linear(input_dims, hidden_dims)
+
+        # Extrator de features convolucional
+        self.feature_extractor = DilatedConvEncoder(
+            hidden_dims,
+            [hidden_dims] * depth + [output_dims],
+            kernel_size=3
+        )
+
+        # Extração de tendência por convoluções
+        self.kernels = kernels
+        self.tfd = nn.ModuleList(
+            [nn.Conv1d(output_dims, self.component_dims, k, padding=k - 1) for k in kernels]
+        )
+
+        # Transformer aplicado sobre a tendência
+        self.trend_transformer = TransformerEncoder(
+            input_dims=self.component_dims,
+            output_dims=self.component_dims,
+            num_heads=transformer_heads,
+            depth=transformer_depth,
+            hidden_dim=self.component_dims,
+            dropout=transformer_dropout
+        )
+
+        # Extração de sazonalidade via FFT
+        self.sfd = nn.ModuleList([
+            BandedFourierLayer(output_dims, self.component_dims, b, 1, length=length) for b in range(1)
+        ])
+
+        self.repr_dropout = nn.Dropout(p=0.1)
+
+    def forward(self, x, tcn_output=False, mask='all_true'):
+        nan_mask = ~x.isnan().any(axis=-1)
+        x[~nan_mask] = 0
+        x = self.input_fc(x)  # B x T x Ch
+
+        # Máscara de entrada
+        if mask is None:
+            mask = self.mask_mode if self.training else 'all_true'
+
+        if mask == 'binomial':
+            mask = generate_binomial_mask(x.size(0), x.size(1)).to(x.device)
+        elif mask == 'continuous':
+            mask = generate_continuous_mask(x.size(0), x.size(1)).to(x.device)
+        elif mask == 'all_true':
+            mask = x.new_full((x.size(0), x.size(1)), True, dtype=torch.bool)
+        elif mask == 'all_false':
+            mask = x.new_full((x.size(0), x.size(1)), False, dtype=torch.bool)
+        elif mask == 'mask_last':
+            mask = x.new_full((x.size(0), x.size(1)), True, dtype=torch.bool)
+            mask[:, -1] = False
+
+        mask &= nan_mask
+        x[~mask] = 0
+
+        # Extração convolucional
+        x = x.transpose(1, 2)  # B x Ch x T
+        x = self.feature_extractor(x)  # B x Co x T
+
+        if tcn_output:
+            return x.transpose(1, 2)
+
+        # --- Tendência ---
+        trend = []
+        for idx, mod in enumerate(self.tfd):
+            out = mod(x)
+            if self.kernels[idx] != 1:
+                out = out[..., :-(self.kernels[idx] - 1)]
+            trend.append(out.transpose(1, 2))  # B x T x D
+        trend = reduce(
+            rearrange(trend, 'list b t d -> list b t d'),
+            'list b t d -> b t d', 'mean'
+        )
+
+        # Transformer na tendência
+        trend = self.trend_transformer(trend)[0]
+
+        # --- Sazonalidade ---
+        x = x.transpose(1, 2)  # B x T x D
+        season = self.sfd[0](x)
+
+        return trend, self.repr_dropout(season)

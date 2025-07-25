@@ -3,6 +3,15 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
+
+""" 
+    =============== =============== =============== =============== ===============
+
+    SOMENTE PARA CARREGAR OS DADOS DE FORECAST CSV E FORECAST NPYS    
+
+    =============== =============== =============== =============== ===============
+
+"""
 # Define the root directory dynamically
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 

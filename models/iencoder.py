@@ -7,8 +7,9 @@ from sklearn.preprocessing import MinMaxScaler
 import os
 
 
+""" ESSA CLASSE IENCODER É UTILIZADA PARA A ETAPA DE AVALAIAÇÃO DO MODELO DE PREVISÃO """
 
-
+""" Modulo para analise de componentes independetes (ICA) com PyTorch """
 class NonlinearICA(nn.Module):
     def __init__(self, input_dim, hidden_dim, source_dim):
         super(NonlinearICA, self).__init__()
@@ -31,7 +32,7 @@ class NonlinearICA(nn.Module):
 
     def encode(self, x):
         return self.encoder(x)
-
+    
 
 def load_and_preprocess_ica_data(name, univar=False):
     #df = pd.read_csv(file_path, index_col='date', parse_dates=True)

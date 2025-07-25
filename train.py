@@ -10,6 +10,7 @@ from utils import init_dl_program, name_with_datetime, pkl_save, data_dropout
 
 # import methods
 from tsi import TSI
+from tsi_modificado import TSI as TSI_Modificado
 
 
 def save_checkpoint_callback(
@@ -85,14 +86,23 @@ if __name__ == '__main__':
     
     t = time.time()
 
-    model = TSI(
-        input_dims=train_data.shape[-1],
-        kernels=args.kernels,
-        alpha=args.alpha,
-        max_train_length=args.max_train_length,
-        device=device,
-        **config
-    )
+    # model = TSI(
+    #     input_dims=train_data.shape[-1],
+    #     kernels=args.kernels,
+    #     alpha=args.alpha,
+    #     max_train_length=args.max_train_length,
+    #     device=device,
+    #     **config
+    # )
+
+    model = TSI_Modificado(
+    input_dims=train_data.shape[-1],
+    kernels=args.kernels,
+    alpha=args.alpha,
+    max_train_length=args.max_train_length,
+    device=device,
+    **config
+)
 
     loss_log = model.fit(
         train_data,
