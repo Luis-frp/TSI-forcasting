@@ -30,7 +30,7 @@ def cal_metrics(pred, target):
 def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_covariate_cols, padding):
 
    
-    train_X, valid_X, test_X = load_and_preprocess_ica_data('ETTh1')
+    train_X, valid_X, test_X = load_and_preprocess_ica_data('exchange_rate')
 
     input_dim = train_X.shape[1]
     hidden_dim = 100

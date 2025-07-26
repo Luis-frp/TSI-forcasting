@@ -86,23 +86,23 @@ if __name__ == '__main__':
     
     t = time.time()
 
-    # model = TSI(
-    #     input_dims=train_data.shape[-1],
-    #     kernels=args.kernels,
-    #     alpha=args.alpha,
-    #     max_train_length=args.max_train_length,
-    #     device=device,
-    #     **config
-    # )
+    model = TSI(
+        input_dims=train_data.shape[-1],
+        kernels=args.kernels,
+        alpha=args.alpha,
+        max_train_length=args.max_train_length,
+        device=device,
+        **config
+    )
 
-    model = TSI_Modificado(
-    input_dims=train_data.shape[-1],
-    kernels=args.kernels,
-    alpha=args.alpha,
-    max_train_length=args.max_train_length,
-    device=device,
-    **config
-)
+    # model = TSI_Modificado(
+    #         input_dims=train_data.shape[-1],
+    #         kernels=args.kernels,
+    #         alpha=args.alpha,
+    #         max_train_length=args.max_train_length,
+    #         device=device,
+    #         **config
+    #     )
 
     loss_log = model.fit(
         train_data,
