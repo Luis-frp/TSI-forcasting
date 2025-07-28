@@ -90,11 +90,13 @@ class BandedFourierLayer(nn.Module):
         nn.init.zeros_(self.bias_imag)
     
     def complex_activation_fn(self, x):
-        """Ativação complexa: CReLU ou similar"""
+        """Ativação complexa: CReLU ou similar com estabilidade numérica"""
         if self.complex_activation:
             real, imag = x.real, x.imag
-            magnitude = torch.sqrt(real**2 + imag**2)
-            phase = torch.atan2(imag, real)
+            # Adicionar epsilon para estabilidade numérica
+            eps = 1e-8
+            magnitude = torch.sqrt(real**2 + imag**2 + eps)
+            phase = torch.atan2(imag, real + eps)
             
             # Aplicar ativação na magnitude
             magnitude = F.relu(magnitude)
@@ -114,7 +116,8 @@ class BandedFourierLayer(nn.Module):
         
         # Aplicar pesos aprendíveis às frequências
         if self.use_learnable_freq:
-            freq_weights = self.freq_dropout(F.softmax(self.freq_weights, dim=0))
+            # Usar clamp para evitar valores extremos
+            freq_weights = self.freq_dropout(F.softmax(torch.clamp(self.freq_weights, -10, 10), dim=0))
             selected_fft = selected_fft * freq_weights.unsqueeze(0).unsqueeze(-1)
         
         # Construir pesos complexos
