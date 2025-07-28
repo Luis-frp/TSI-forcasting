@@ -201,7 +201,7 @@ class TSIEncoder(nn.Module):
         
         if self.use_wavelet_trend:
             # Método wavelet inspirado - melhor para séries temporais
-            from wavelet_trend_extractor import create_wavelet_trend_extractor
+            from .wavelet_trend_extractor import create_wavelet_trend_extractor
             self.tfd = create_wavelet_trend_extractor(
                 input_dims=output_dims,
                 output_dims=component_dims,
