@@ -27,10 +27,10 @@ def cal_metrics(pred, target):
         'MAE': np.abs(pred - target).mean()
     }
 
-def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_covariate_cols, padding):
+def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_covariate_cols, padding, dataset_name='exchange_rate'):
 
-   
-    train_X, valid_X, test_X = load_and_preprocess_ica_data('exchange_rate')
+    # Usar o dataset correto baseado no parâmetro
+    train_X, valid_X, test_X = load_and_preprocess_ica_data(dataset_name)
 
     input_dim = train_X.shape[1]
     hidden_dim = 100
@@ -78,8 +78,26 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
     print("train_repr shape:", train_repr.shape)
     print("train_source_data shape before unsqueeze:", train_source_data.shape)
 
-    #train_source_data = train_source_data.unsqueeze(0)
-    print("train_source_data shape after unsqueeze:", train_source_data.shape)
+    # Verificar compatibilidade de dimensões e ajustar se necessário
+    train_repr_samples = train_repr.shape[1]
+    train_source_samples = train_source_data.shape[0]
+    
+    if train_repr_samples != train_source_samples:
+        print(f"⚠️  Ajustando dimensões: train_repr({train_repr_samples}) vs train_source_data({train_source_samples})")
+        
+        # Usar o menor tamanho para ambos
+        min_samples = min(train_repr_samples, train_source_samples)
+        train_repr = train_repr[:, :min_samples]
+        valid_repr = valid_repr[:, :min_samples] if valid_repr.shape[1] > min_samples else valid_repr
+        test_repr = test_repr[:, :min_samples] if test_repr.shape[1] > min_samples else test_repr
+        
+        train_source_data = train_source_data[:min_samples]
+        valid_source_data = valid_source_data[:min_samples] if valid_source_data.shape[0] > min_samples else valid_source_data
+        test_source_data = test_source_data[:min_samples] if test_source_data.shape[0] > min_samples else test_source_data
+        
+        print(f"✅ Dimensões ajustadas para: {min_samples} amostras")
+
+    print("train_source_data shape after adjustment:", train_source_data.shape)
     
     train_repr = torch.cat((train_repr, train_source_data.unsqueeze(0)), dim=2)
     valid_repr = torch.cat((valid_repr, valid_source_data.unsqueeze(0)), dim=2)

@@ -10,7 +10,6 @@ from utils import init_dl_program, name_with_datetime, pkl_save, data_dropout
 
 # import methods
 from tsi import TSI
-from tsi_modificado import TSI as TSI_Modificado
 
 
 def save_checkpoint_callback(
@@ -117,7 +116,7 @@ if __name__ == '__main__':
     print(f"\nTraining time: {datetime.timedelta(seconds=t)}\n")
 
     if args.eval:
-        out, eval_res = tasks.eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_covariate_cols, args.max_train_length-1)
+        out, eval_res = tasks.eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_covariate_cols, args.max_train_length-1, args.dataset)
         print('Evaluation result:', eval_res)
         pkl_save(f'{run_dir}/eval_res.pkl', eval_res)
         pkl_save(f'{run_dir}/out.pkl', out)
