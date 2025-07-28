@@ -11,9 +11,6 @@ import numpy as np
 
 from .dilated_conv import DilatedConvEncoder
 # from .lstm import LSTMEncoder
-from .transformer_encoder import TransformerEncoder
-
-
 
 def generate_continuous_mask(B, T, n=5, l=0.1):
     res = torch.full((B, T), True, dtype=torch.bool)
@@ -35,48 +32,113 @@ def generate_continuous_mask(B, T, n=5, l=0.1):
 def generate_binomial_mask(B, T, p=0.5):
     return torch.from_numpy(np.random.binomial(1, p, size=(B, T))).to(torch.bool)
 
-### AQUI É ONDE TEMOS O FFT APLICAÇÃO DA TRANSFORMADA DE FOURIER
+### AQUI É ONDE TEMOS O FFT APLICAÇÃO DA TRANSFORMADA DE FOURIER - VERSÃO MELHORADA
 class BandedFourierLayer(nn.Module):
-    def __init__(self, in_channels, out_channels, band, num_bands, length=201):
+    """
+    Versão melhorada do BandedFourierLayer com múltiplas melhorias:
+    - Frequências aprendíveis
+    - Ativação complexa
+    - Regularização com dropout
+    - Normalização de camada
+    """
+    def __init__(self, in_channels, out_channels, band, num_bands, length=201, 
+                 use_learnable_freq=True, freq_dropout=0.1, complex_activation=True):
         super().__init__()
-
+        
         self.length = length
         self.total_freqs = (self.length // 2) + 1
-
         self.in_channels = in_channels
         self.out_channels = out_channels
-
-        self.band = band  # zero indexed
+        self.band = band
         self.num_bands = num_bands
-
-        self.num_freqs = self.total_freqs // self.num_bands + (self.total_freqs % self.num_bands if self.band == self.num_bands - 1 else 0)
-
+        self.use_learnable_freq = use_learnable_freq
+        self.complex_activation = complex_activation
+        
+        # Cálculo de frequências
+        self.num_freqs = self.total_freqs // self.num_bands + (
+            self.total_freqs % self.num_bands if self.band == self.num_bands - 1 else 0
+        )
         self.start = self.band * (self.total_freqs // self.num_bands)
         self.end = self.start + self.num_freqs
-
-
-        # case: from other frequencies
-        self.weight = nn.Parameter(torch.empty((self.num_freqs, in_channels, out_channels), dtype=torch.cfloat))
-        self.bias = nn.Parameter(torch.empty((self.num_freqs, out_channels), dtype=torch.cfloat))
+        
+        # Pesos complexos melhorados
+        if use_learnable_freq:
+            # Frequências aprendíveis
+            self.freq_weights = nn.Parameter(torch.ones(self.num_freqs))
+            
+        # Pesos principais
+        self.weight_real = nn.Parameter(torch.empty((self.num_freqs, in_channels, out_channels)))
+        self.weight_imag = nn.Parameter(torch.empty((self.num_freqs, in_channels, out_channels)))
+        self.bias_real = nn.Parameter(torch.empty((self.num_freqs, out_channels)))
+        self.bias_imag = nn.Parameter(torch.empty((self.num_freqs, out_channels)))
+        
+        # Dropout para regularização
+        self.freq_dropout = nn.Dropout(freq_dropout)
+        
+        # Normalização
+        self.layer_norm = nn.LayerNorm(out_channels)
+        
         self.reset_parameters()
-
+    
+    def reset_parameters(self):
+        # Inicialização Xavier/Glorot para pesos reais
+        for weight in [self.weight_real, self.weight_imag]:
+            nn.init.xavier_uniform_(weight)
+        
+        # Inicialização pequena para bias
+        nn.init.zeros_(self.bias_real)
+        nn.init.zeros_(self.bias_imag)
+    
+    def complex_activation_fn(self, x):
+        """Ativação complexa: CReLU ou similar"""
+        if self.complex_activation:
+            real, imag = x.real, x.imag
+            magnitude = torch.sqrt(real**2 + imag**2)
+            phase = torch.atan2(imag, real)
+            
+            # Aplicar ativação na magnitude
+            magnitude = F.relu(magnitude)
+            
+            # Reconstruir número complexo
+            return magnitude * torch.complex(torch.cos(phase), torch.sin(phase))
+        return x
+    
     def forward(self, input):
-        # input - b t d
         b, t, _ = input.shape
+        
+        # FFT
         input_fft = fft.rfft(input, dim=1)
-        output_fft = torch.zeros(b, t // 2 + 1, self.out_channels, device=input.device, dtype=torch.cfloat)
-        output_fft[:, self.start:self.end] = self._forward(input_fft)
-        return fft.irfft(output_fft, n=input.size(1), dim=1)
-
-    def _forward(self, input):
-        output = torch.einsum('bti,tio->bto', input[:, self.start:self.end], self.weight)
-        return output + self.bias
-
-    def reset_parameters(self) -> None:
-        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-        fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
-        bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
-        nn.init.uniform_(self.bias, -bound, bound)
+        
+        # Selecionar banda de frequências
+        selected_fft = input_fft[:, self.start:self.end]
+        
+        # Aplicar pesos aprendíveis às frequências
+        if self.use_learnable_freq:
+            freq_weights = self.freq_dropout(F.softmax(self.freq_weights, dim=0))
+            selected_fft = selected_fft * freq_weights.unsqueeze(0).unsqueeze(-1)
+        
+        # Construir pesos complexos
+        weight_complex = torch.complex(self.weight_real, self.weight_imag)
+        bias_complex = torch.complex(self.bias_real, self.bias_imag)
+        
+        # Transformação linear complexa
+        output_fft_band = torch.einsum('bti,tio->bto', selected_fft, weight_complex) + bias_complex
+        
+        # Ativação complexa
+        output_fft_band = self.complex_activation_fn(output_fft_band)
+        
+        # Reconstruir FFT completa
+        output_fft = torch.zeros(b, t // 2 + 1, self.out_channels, 
+                                device=input.device, dtype=torch.cfloat)
+        output_fft[:, self.start:self.end] = output_fft_band
+        
+        # IFFT
+        output = fft.irfft(output_fft, n=input.size(1), dim=1)
+        
+        # Normalização
+        output = self.layer_norm(output)
+        
+        return output
 
 
 class NonlinearICA(nn.Module):
@@ -196,163 +258,3 @@ class TSIEncoder(nn.Module):
 
         return trend, self.repr_dropout(season)
         #return trend
-
-
-class TSIEncoderWithTransformer(nn.Module):
-    """
-    TSI Encoder com refinamento de tendência via Transformer.
-    Mantém compatibilidade total com a versão original.
-    """
-    
-    def __init__(self, input_dims, output_dims,
-                 kernels: List[int],
-                 length: int,
-                 hidden_dims=64, depth=10,
-                 mask_mode='binomial',
-                 # Novos parâmetros para o Transformer
-                 use_transformer=True,
-                 transformer_heads=4,
-                 transformer_depth=2,
-                 transformer_dropout=0.1):
-        super().__init__()
-
-        component_dims = output_dims // 2
-
-        self.input_dims = input_dims
-        self.output_dims = output_dims
-        self.component_dims = component_dims
-        self.hidden_dims = hidden_dims
-        self.mask_mode = mask_mode
-        self.use_transformer = use_transformer
-        
-        # Componentes originais (idênticos ao TSIEncoder original)
-        self.input_fc = nn.Linear(input_dims, hidden_dims)
-
-        self.feature_extractor = DilatedConvEncoder(
-            hidden_dims,
-            [hidden_dims] * depth + [output_dims],
-            kernel_size=3
-        )
-
-        self.repr_dropout = nn.Dropout(p=0.1)
-
-        self.kernels = kernels
-
-        self.tfd = nn.ModuleList(
-            [nn.Conv1d(output_dims, component_dims, k, padding=k-1) for k in kernels]
-        )
-
-        self.sfd = nn.ModuleList(
-            [BandedFourierLayer(output_dims, component_dims, b, 1, length=length) for b in range(1)]
-        )
-        
-        # Novo componente: Transformer para refinamento da tendência
-        if self.use_transformer:
-            self.trend_transformer = TransformerEncoder(
-                input_dims=component_dims,
-                output_dims=component_dims,
-                num_heads=transformer_heads,
-                depth=transformer_depth,
-                hidden_dim=component_dims * 2,  # Hidden dim do feed-forward
-                dropout=transformer_dropout,
-                max_len=length
-            )
-
-    def forward(self, x, tcn_output=False, mask='all_true'):  # x: B x T x input_dims
-        """
-        Forward pass idêntico ao original, com adição opcional do Transformer
-        """
-        nan_mask = ~x.isnan().any(axis=-1)
-        x[~nan_mask] = 0
-        x = self.input_fc(x)  # B x T x Ch
-
-        # Generate & apply mask (código original)
-        if mask is None:
-            if self.training:
-                mask = self.mask_mode
-            else:
-                mask = 'all_true'
-
-        if mask == 'binomial':
-            mask = generate_binomial_mask(x.size(0), x.size(1)).to(x.device)
-        elif mask == 'continuous':
-            mask = generate_continuous_mask(x.size(0), x.size(1)).to(x.device)
-        elif mask == 'all_true':
-            mask = x.new_full((x.size(0), x.size(1)), True, dtype=torch.bool)
-        elif mask == 'all_false':
-            mask = x.new_full((x.size(0), x.size(1)), False, dtype=torch.bool)
-        elif mask == 'mask_last':
-            mask = x.new_full((x.size(0), x.size(1)), True, dtype=torch.bool)
-            mask[:, -1] = False
-
-        mask &= nan_mask
-        x[~mask] = 0
-
-        # Conv encoder (código original)
-        x = x.transpose(1, 2)  # B x Ch x T
-        x = self.feature_extractor(x)  # B x Co x T
-
-        if tcn_output:
-            return x.transpose(1, 2)
-
-        # Extração de tendência (código original)
-        trend = []
-        for idx, mod in enumerate(self.tfd):
-            out = mod(x)  # b d t
-            if self.kernels[idx] != 1:
-                out = out[..., :-(self.kernels[idx] - 1)]
-            trend.append(out.transpose(1, 2))  # b t d
-        trend = reduce(
-            rearrange(trend, 'list b t d -> list b t d'),
-            'list b t d -> b t d', 'mean'
-        )
-        
-        # NOVO: Refinamento da tendência com Transformer
-        if self.use_transformer:
-            # Aplicar Transformer para refinar a tendência
-            refined_trend, attention_weights = self.trend_transformer(trend)
-            trend = refined_trend
-
-        # Extração de sazonalidade (código original)
-        x = x.transpose(1, 2)  # B x T x Co
-        season = []
-        for mod in self.sfd:
-            out = mod(x)  # b t d
-            season.append(out)
-        season = season[0]
-
-        return trend, self.repr_dropout(season)
-    
-    def get_attention_weights(self, x, mask='all_true'):
-        """
-        Método adicional para obter pesos de atenção do Transformer
-        """
-        if not self.use_transformer:
-            return None
-            
-        # Forward pass até a tendência
-        nan_mask = ~x.isnan().any(axis=-1)
-        x[~nan_mask] = 0
-        x = self.input_fc(x)
-
-        if mask == 'all_true':
-            mask = x.new_full((x.size(0), x.size(1)), True, dtype=torch.bool)
-        mask &= nan_mask
-        x[~mask] = 0
-
-        x = x.transpose(1, 2)
-        x = self.feature_extractor(x)
-
-        trend = []
-        for idx, mod in enumerate(self.tfd):
-            out = mod(x)
-            if self.kernels[idx] != 1:
-                out = out[..., :-(self.kernels[idx] - 1)]
-            trend.append(out.transpose(1, 2))
-        trend = reduce(
-            rearrange(trend, 'list b t d -> list b t d'),
-            'list b t d -> b t d', 'mean'
-        )
-        
-        # Obter pesos de atenção
-        return self.trend_transformer.get_attention_weights(trend)

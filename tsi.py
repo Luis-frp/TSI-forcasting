@@ -10,7 +10,7 @@ from torch.utils.data import TensorDataset, DataLoader, Dataset
 import numpy as np
 from einops import rearrange, repeat, reduce
 
-from models.encoder import TSIEncoder, TSIEncoderWithTransformer
+from models.encoder import TSIEncoder
 from utils import take_per_row, split_with_nan, centerize_vary_length_series, torch_pad_nan
 
 
