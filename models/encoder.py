@@ -207,7 +207,8 @@ class TSIEncoder(nn.Module):
 
     def forward(self, x, tcn_output=False, mask='all_true'):  # x: B x T x input_dims
         nan_mask = ~x.isnan().any(axis=-1)
-        x[~nan_mask] = 0
+        # Evitar operação in-place quando requires_grad=True
+        x = torch.where(nan_mask.unsqueeze(-1), x, torch.zeros_like(x))
         x = self.input_fc(x)  # B x T x Ch
 
         # generate & apply mask
@@ -230,7 +231,8 @@ class TSIEncoder(nn.Module):
             mask[:, -1] = False
 
         mask &= nan_mask
-        x[~mask] = 0
+        # Evitar operação in-place quando requires_grad=True
+        x = torch.where(mask.unsqueeze(-1), x, torch.zeros_like(x))
 
         # conv encoder
         x = x.transpose(1, 2)  # B x Ch x T
