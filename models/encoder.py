@@ -196,9 +196,23 @@ class TSIEncoder(nn.Module):
 
         self.kernels = kernels
 
-        self.tfd = nn.ModuleList(
-            [nn.Conv1d(output_dims, component_dims, k, padding=k-1) for k in kernels]
-        )
+        # MELHORIAS DE TENDÊNCIA - escolha o método aqui
+        self.trend_method = 'adaptive_conv'  # opções: 'adaptive_conv', 'hierarchical', 'wavelet_inspired', 'multi_scale', 'original'
+        
+        if self.trend_method == 'original':
+            # Método original
+            self.tfd = nn.ModuleList(
+                [nn.Conv1d(output_dims, component_dims, k, padding=k-1) for k in kernels]
+            )
+        else:
+            # Método melhorado
+            from trend_improvements import create_improved_trend_extractor
+            self.tfd = create_improved_trend_extractor(
+                input_dims=output_dims,
+                output_dims=component_dims,
+                kernels=kernels,
+                method=self.trend_method
+            )
 
         self.sfd = nn.ModuleList(
             [BandedFourierLayer(output_dims, component_dims, b, 1, length=length) for b in range(1)]
@@ -241,15 +255,22 @@ class TSIEncoder(nn.Module):
         if tcn_output:
             return x.transpose(1, 2)
 
-        trend = []
-        for idx, mod in enumerate(self.tfd):
-            out = mod(x)  # b d t
-            if self.kernels[idx] != 1:
-                out = out[..., :-(self.kernels[idx] - 1)]
-            trend.append(out.transpose(1, 2))  # b t d
-        trend = reduce(
-            rearrange(trend, 'list b t d -> list b t d'),
-            'list b t d -> b t d', 'mean'
+        # EXTRAÇÃO DE TENDÊNCIA MELHORADA
+        if self.trend_method == 'original':
+            # Método original
+            trend = []
+            for idx, mod in enumerate(self.tfd):
+                out = mod(x)  # b d t
+                if self.kernels[idx] != 1:
+                    out = out[..., :-(self.kernels[idx] - 1)]
+                trend.append(out.transpose(1, 2))  # b t d
+            trend = reduce(
+                rearrange(trend, 'list b t d -> list b t d'),
+                'list b t d -> b t d', 'mean'
+            )
+        else:
+            # Método melhorado - já retorna no formato correto
+            trend = self.tfd(x)  # já retorna (b, t, d)
         )
 
         x = x.transpose(1, 2)  # B x T x Co
