@@ -374,15 +374,35 @@ class TSI:
                         )
                         if n_samples < batch_size:
                             if calc_buffer_l + n_samples > batch_size:
-                                
+                                out = self._eval_with_pooling(
+                                    torch.cat(calc_buffer, dim=0),
+                                    mask,
+                                    slicing=slicing,
+                                    encoding_window=encoding_window
+                                )
+                                reprs += torch.split(out, n_samples)
+                                calc_buffer = []
+                                calc_buffer_l = 0
                             calc_buffer.append(x_sliding)
                             calc_buffer_l += n_samples
                         else:
-                            
+                            out = self._eval_with_pooling(
+                                x_sliding,
+                                mask,
+                                slicing=slicing,
+                                encoding_window=encoding_window
+                            )
+                            reprs.append(out)
 
                     if n_samples < batch_size:
                         if calc_buffer_l > 0:
-                            
+                            out = self._eval_with_pooling(
+                                torch.cat(calc_buffer, dim=0),
+                                mask,
+                                slicing=slicing,
+                                encoding_window=encoding_window
+                            )
+                            reprs += torch.split(out, n_samples)
                     
                     out = torch.cat(reprs, dim=1)
                     if encoding_window == 'full_series':
@@ -532,99 +552,6 @@ class TSIWithTransformer(TSI):
             # weights shape: (batch, heads, seq_len, seq_len)
             
         return attention_weights
-
-
-def adjust_learning_rate(optimizer, lr, epoch, epochs):
-        
-        dataset = TensorDataset(torch.from_numpy(data).to(torch.float))
-        loader = DataLoader(dataset, batch_size=batch_size)
-        
-        with torch.no_grad():
-            output = []
-            for batch in loader:
-                x = batch[0]
-                if sliding_length is not None:
-                    reprs = []
-                    if n_samples < batch_size:
-                        calc_buffer = []
-                        calc_buffer_l = 0
-                    for i in range(0, ts_l, sliding_length):
-                        l = i - sliding_padding
-                        r = i + sliding_length + (sliding_padding if not casual else 0)
-                        x_sliding = torch_pad_nan(
-                            x[:, max(l, 0) : min(r, ts_l)],
-                            left=-l if l<0 else 0,
-                            right=r-ts_l if r>ts_l else 0,
-                            dim=1
-                        )
-                        if n_samples < batch_size:
-                            if calc_buffer_l + n_samples > batch_size:
-                                out = self._eval_with_pooling(
-                                    torch.cat(calc_buffer, dim=0),
-                                    mask,
-                                    slicing=slicing,
-                                    encoding_window=encoding_window
-                                )
-                                reprs += torch.split(out, n_samples)
-                                calc_buffer = []
-                                calc_buffer_l = 0
-                            calc_buffer.append(x_sliding)
-                            calc_buffer_l += n_samples
-                        else:
-                            out = self._eval_with_pooling(
-                                x_sliding,
-                                mask,
-                                slicing=slicing,
-                                encoding_window=encoding_window
-                            )
-                            reprs.append(out)
-
-                    if n_samples < batch_size:
-                        if calc_buffer_l > 0:
-                            out = self._eval_with_pooling(
-                                torch.cat(calc_buffer, dim=0),
-                                mask,
-                                slicing=slicing,
-                                encoding_window=encoding_window
-                            )
-                            reprs += torch.split(out, n_samples)
-                            calc_buffer = []
-                            calc_buffer_l = 0
-                    
-                    out = torch.cat(reprs, dim=1)
-                    if encoding_window == 'full_series':
-                        out = F.max_pool1d(
-                            out.transpose(1, 2).contiguous(),
-                            kernel_size = out.size(1),
-                        ).squeeze(1)
-                else:
-                    out = self._eval_with_pooling(x, mask, encoding_window=encoding_window)
-                    if encoding_window == 'full_series':
-                        out = out.squeeze(1)
-                        
-                output.append(out)
-                
-            output = torch.cat(output, dim=0)
-
-        self.net.train(org_training)
-        return output.numpy()
-    
-    def save(self, fn):
-        ''' Save the model to a file.
-        
-        Args:
-            fn (str): filename.
-        '''
-        torch.save(self.net.state_dict(), fn)
-    
-    def load(self, fn):
-        ''' Load the model from a file.
-        
-        Args:
-            fn (str): filename.
-        '''
-        state_dict = torch.load(fn, map_location=self.device)
-        self.net.load_state_dict(state_dict)
 
 
 def adjust_learning_rate(optimizer, lr, epoch, epochs):
