@@ -81,7 +81,15 @@ def test_trend_extraction():
         with torch.no_grad():
             result_wavelet = encoder_wavelet(test_data)
         
-        print(f"   ✅ Shape de saída: {result_wavelet.shape}")
+        # Desempacotar o resultado (trend, season)
+        if isinstance(result_wavelet, tuple):
+            trend_wavelet, season_wavelet = result_wavelet
+            print(f"   ✅ Shape trend: {trend_wavelet.shape}")
+            print(f"   ✅ Shape season: {season_wavelet.shape}")
+        else:
+            trend_wavelet = result_wavelet
+            print(f"   ✅ Shape de saída: {result_wavelet.shape}")
+            
         print(f"   ✅ Parâmetros: {sum(p.numel() for p in encoder_wavelet.tfd.parameters()):,}")
         
         # Teste 2: Encoder Original (para comparação)
@@ -94,14 +102,27 @@ def test_trend_extraction():
         with torch.no_grad():
             result_original = encoder_wavelet(test_data)
         
-        print(f"   ✅ Shape de saída: {result_original.shape}")
+        # Desempacotar o resultado (trend, season)
+        if isinstance(result_original, tuple):
+            trend_original, season_original = result_original
+            print(f"   ✅ Shape trend: {trend_original.shape}")
+            print(f"   ✅ Shape season: {season_original.shape}")
+        else:
+            trend_original = result_original
+            print(f"   ✅ Shape de saída: {result_original.shape}")
+            
         print(f"   ✅ Parâmetros: {sum(p.numel() for p in encoder_wavelet.tfd.parameters()):,}")
         
         # Comparação de outputs
         print(f"\n📈 Comparação de Resultados:")
-        print(f"   Wavelet mean: {result_wavelet.mean().item():.6f}")
-        print(f"   Original mean: {result_original.mean().item():.6f}")
-        print(f"   Diferença absoluta média: {(result_wavelet - result_original).abs().mean().item():.6f}")
+        print(f"   Wavelet trend mean: {trend_wavelet.mean().item():.6f}")
+        print(f"   Original trend mean: {trend_original.mean().item():.6f}")
+        print(f"   Diferença trend absoluta média: {(trend_wavelet - trend_original).abs().mean().item():.6f}")
+        
+        if isinstance(result_wavelet, tuple):
+            print(f"   Wavelet season mean: {season_wavelet.mean().item():.6f}")
+            print(f"   Original season mean: {season_original.mean().item():.6f}")
+            print(f"   Diferença season absoluta média: {(season_wavelet - season_original).abs().mean().item():.6f}")
         
         print(f"\n🎯 Vantagens do Método Wavelet:")
         print(f"   ✅ Separação automática de frequências")
