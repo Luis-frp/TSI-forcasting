@@ -42,13 +42,18 @@ class WaveletTrendExtractor(nn.Module):
             # Normalização para estabilidade
             norm = nn.LayerNorm(output_dims)
             
-            self.wavelet_modules.append(nn.ModuleDict({
+            # Criar módulo para este kernel
+            module = nn.ModuleDict({
                 'low_pass': low_pass,      # Extrai tendência
                 'high_pass': high_pass,    # Extrai detalhes
                 'combiner': combiner,      # Combina resultado
-                'norm': norm,              # Normaliza saída
-                'kernel_size': k
-            }))
+                'norm': norm               # Normaliza saída
+            })
+            
+            # Adicionar kernel_size como atributo (não como módulo)
+            module.kernel_size = k
+            
+            self.wavelet_modules.append(module)
         
         # Dropout para regularização
         self.dropout = nn.Dropout(0.1)
@@ -60,13 +65,13 @@ class WaveletTrendExtractor(nn.Module):
         """
         trends = []
         
-        for mod in self.wavelet_modules:
+        for i, mod in enumerate(self.wavelet_modules):
             # 1. Aplicar filtros passa-baixa e passa-alta
             low_freq = mod['low_pass'](x)   # Tendência (suave)
             high_freq = mod['high_pass'](x) # Detalhes (rápidos)
             
             # 2. Cortar padding se necessário
-            k = mod['kernel_size']
+            k = mod.kernel_size  # Acessar o atributo
             if k != 1:
                 low_freq = low_freq[..., :-(k - 1)]
                 high_freq = high_freq[..., :-(k - 1)]
