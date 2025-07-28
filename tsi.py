@@ -10,7 +10,7 @@ from torch.utils.data import TensorDataset, DataLoader, Dataset
 import numpy as np
 from einops import rearrange, repeat, reduce
 
-from models.encoder import TSIEncoder
+from models.encoder import TSIEncoder, TSIEncoderWithTransformer
 from utils import take_per_row, split_with_nan, centerize_vary_length_series, torch_pad_nan
 
 
@@ -350,6 +350,191 @@ class TSI:
 
         org_training = self.net.training
         self.net.eval()
+        
+        dataset = TensorDataset(torch.from_numpy(data).to(torch.float))
+        loader = DataLoader(dataset, batch_size=batch_size)
+        
+        with torch.no_grad():
+            output = []
+            for batch in loader:
+                x = batch[0]
+                if sliding_length is not None:
+                    reprs = []
+                    if n_samples < batch_size:
+                        calc_buffer = []
+                        calc_buffer_l = 0
+                    for i in range(0, ts_l, sliding_length):
+                        l = i - sliding_padding
+                        r = i + sliding_length + (sliding_padding if not casual else 0)
+                        x_sliding = torch_pad_nan(
+                            x[:, max(l, 0) : min(r, ts_l)],
+                            left=-l if l<0 else 0,
+                            right=r-ts_l if r>ts_l else 0,
+                            dim=1
+                        )
+                        if n_samples < batch_size:
+                            if calc_buffer_l + n_samples > batch_size:
+                                
+                            calc_buffer.append(x_sliding)
+                            calc_buffer_l += n_samples
+                        else:
+                            
+
+                    if n_samples < batch_size:
+                        if calc_buffer_l > 0:
+                            
+                    
+                    out = torch.cat(reprs, dim=1)
+                    if encoding_window == 'full_series':
+                        out = F.max_pool1d(
+                            out.transpose(1, 2).contiguous(),
+                            kernel_size = out.size(1),
+                        ).squeeze(1)
+                else:
+                    out = self._eval_with_pooling(x, mask, encoding_window=encoding_window)
+                    if encoding_window == 'full_series':
+                        out = out.squeeze(1)
+                        
+                output.append(out)
+                
+            output = torch.cat(output, dim=0)
+
+        self.net.train(org_training)
+        return output.numpy()
+    
+    def save(self, fn):
+        ''' Save the model to a file.
+        
+        Args:
+            fn (str): filename.
+        '''
+        torch.save(self.net.state_dict(), fn)
+    
+    def load(self, fn):
+        ''' Load the model from a file.
+        
+        Args:
+            fn (str): filename.
+        '''
+        state_dict = torch.load(fn, map_location=self.device)
+        self.net.load_state_dict(state_dict)
+
+
+class TSIWithTransformer(TSI):
+    """
+    Versão do TSI com Transformer para refinamento da tendência.
+    Mantém total compatibilidade com a versão original.
+    """
+    
+    def __init__(self,
+                 input_dims: int,
+                 kernels: List[int],
+                 alpha: bool,
+                 max_train_length: int,
+                 output_dims: int = 320,
+                 hidden_dims: int = 64,
+                 depth: int = 10,
+                 device: str = 'cuda',
+                 lr: float = 0.001,
+                 batch_size: int = 16,
+                 after_iter_callback: Union[Callable, None] = None,
+                 after_epoch_callback: Union[Callable, None] = None,
+                 # Novos parâmetros para o Transformer
+                 use_transformer: bool = True,
+                 transformer_heads: int = 4,
+                 transformer_depth: int = 2,
+                 transformer_dropout: float = 0.1):
+        
+        # Inicialização da classe pai com encoder modificado
+        self.input_dims = input_dims
+        self.output_dims = output_dims
+        self.hidden_dims = hidden_dims
+        self.device = device
+        self.lr = lr
+        self.batch_size = batch_size
+        self.max_train_length = max_train_length
+        self.use_transformer = use_transformer
+
+        if kernels is None:
+            kernels = []
+
+        # Usar o novo encoder com Transformer
+        self.net = TSIEncoderWithTransformer(
+            input_dims=input_dims, 
+            output_dims=output_dims,
+            kernels=kernels,
+            length=max_train_length,
+            hidden_dims=hidden_dims, 
+            depth=depth,
+            use_transformer=use_transformer,
+            transformer_heads=transformer_heads,
+            transformer_depth=transformer_depth,
+            transformer_dropout=transformer_dropout
+        ).to(self.device)
+
+        self.tsi = TSIModel(
+            self.net,
+            copy.deepcopy(self.net),
+            kernels=kernels,
+            dim=self.net.component_dims,
+            alpha=alpha,
+            K=256,
+            device=self.device,
+        ).to(self.device)
+
+        self.after_iter_callback = after_iter_callback
+        self.after_epoch_callback = after_epoch_callback
+        
+        self.n_epochs = 0
+        self.n_iters = 0
+    
+    def get_attention_weights(self, data):
+        """
+        Método para obter pesos de atenção do Transformer na tendência
+        
+        Args:
+            data: dados de entrada (numpy array ou tensor)
+            
+        Returns:
+            attention_weights: pesos de atenção de cada camada do Transformer
+        """
+        if not self.use_transformer:
+            return None
+            
+        if isinstance(data, np.ndarray):
+            data = torch.from_numpy(data).to(torch.float).to(self.device)
+        
+        self.net.eval()
+        with torch.no_grad():
+            attention_weights = self.net.get_attention_weights(data)
+        
+        return attention_weights
+    
+    def analyze_trend_attention(self, data, save_path=None):
+        """
+        Análise e visualização dos pesos de atenção na tendência
+        
+        Args:
+            data: dados para análise
+            save_path: caminho para salvar visualizações (opcional)
+        """
+        attention_weights = self.get_attention_weights(data)
+        
+        if attention_weights is None:
+            print("Transformer não está habilitado.")
+            return
+        
+        print(f"Obtidos pesos de atenção de {len(attention_weights)} camadas do Transformer")
+        
+        # Análise básica
+        for i, weights in enumerate(attention_weights):
+            print(f"Camada {i+1}: Shape = {weights.shape}")
+            # weights shape: (batch, heads, seq_len, seq_len)
+            
+        return attention_weights
+
+
+def adjust_learning_rate(optimizer, lr, epoch, epochs):
         
         dataset = TensorDataset(torch.from_numpy(data).to(torch.float))
         loader = DataLoader(dataset, batch_size=batch_size)

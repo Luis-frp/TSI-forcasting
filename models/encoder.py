@@ -11,7 +11,7 @@ import numpy as np
 
 from .dilated_conv import DilatedConvEncoder
 # from .lstm import LSTMEncoder
-from models.trasnformer_encoder import TransformerEncoder  # sua implementação com PositionalEncoding
+from .transformer_encoder import TransformerEncoder
 
 
 
@@ -198,65 +198,80 @@ class TSIEncoder(nn.Module):
         #return trend
 
 
-# MODIFICAÇÃO APLICANDO UMA CAMADA TRANSFORMER SOBRE A TENDÊNCIA
-class TSIEncoderTransformerTrend(nn.Module):
+class TSIEncoderWithTransformer(nn.Module):
+    """
+    TSI Encoder com refinamento de tendência via Transformer.
+    Mantém compatibilidade total com a versão original.
+    """
+    
     def __init__(self, input_dims, output_dims,
-                 kernels,
+                 kernels: List[int],
                  length: int,
                  hidden_dims=64, depth=10,
                  mask_mode='binomial',
+                 # Novos parâmetros para o Transformer
+                 use_transformer=True,
                  transformer_heads=4,
                  transformer_depth=2,
                  transformer_dropout=0.1):
         super().__init__()
 
+        component_dims = output_dims // 2
+
         self.input_dims = input_dims
         self.output_dims = output_dims
+        self.component_dims = component_dims
         self.hidden_dims = hidden_dims
         self.mask_mode = mask_mode
-        self.component_dims = output_dims // 2
-
-        # Projeção inicial
+        self.use_transformer = use_transformer
+        
+        # Componentes originais (idênticos ao TSIEncoder original)
         self.input_fc = nn.Linear(input_dims, hidden_dims)
 
-        # Extrator de features convolucional
         self.feature_extractor = DilatedConvEncoder(
             hidden_dims,
             [hidden_dims] * depth + [output_dims],
             kernel_size=3
         )
 
-        # Extração de tendência por convoluções
-        self.kernels = kernels
-        self.tfd = nn.ModuleList(
-            [nn.Conv1d(output_dims, self.component_dims, k, padding=k - 1) for k in kernels]
-        )
-
-        # Transformer aplicado sobre a tendência
-        self.trend_transformer = TransformerEncoder(
-            input_dims=self.component_dims,
-            output_dims=self.component_dims,
-            num_heads=transformer_heads,
-            depth=transformer_depth,
-            hidden_dim=self.component_dims,
-            dropout=transformer_dropout
-        )
-
-        # Extração de sazonalidade via FFT
-        self.sfd = nn.ModuleList([
-            BandedFourierLayer(output_dims, self.component_dims, b, 1, length=length) for b in range(1)
-        ])
-
         self.repr_dropout = nn.Dropout(p=0.1)
 
-    def forward(self, x, tcn_output=False, mask='all_true'):
+        self.kernels = kernels
+
+        self.tfd = nn.ModuleList(
+            [nn.Conv1d(output_dims, component_dims, k, padding=k-1) for k in kernels]
+        )
+
+        self.sfd = nn.ModuleList(
+            [BandedFourierLayer(output_dims, component_dims, b, 1, length=length) for b in range(1)]
+        )
+        
+        # Novo componente: Transformer para refinamento da tendência
+        if self.use_transformer:
+            self.trend_transformer = TransformerEncoder(
+                input_dims=component_dims,
+                output_dims=component_dims,
+                num_heads=transformer_heads,
+                depth=transformer_depth,
+                hidden_dim=component_dims * 2,  # Hidden dim do feed-forward
+                dropout=transformer_dropout,
+                max_len=length
+            )
+
+    def forward(self, x, tcn_output=False, mask='all_true'):  # x: B x T x input_dims
+        """
+        Forward pass idêntico ao original, com adição opcional do Transformer
+        """
         nan_mask = ~x.isnan().any(axis=-1)
         x[~nan_mask] = 0
         x = self.input_fc(x)  # B x T x Ch
 
-        # Máscara de entrada
+        # Generate & apply mask (código original)
         if mask is None:
-            mask = self.mask_mode if self.training else 'all_true'
+            if self.training:
+                mask = self.mask_mode
+            else:
+                mask = 'all_true'
 
         if mask == 'binomial':
             mask = generate_binomial_mask(x.size(0), x.size(1)).to(x.device)
@@ -273,30 +288,71 @@ class TSIEncoderTransformerTrend(nn.Module):
         mask &= nan_mask
         x[~mask] = 0
 
-        # Extração convolucional
+        # Conv encoder (código original)
         x = x.transpose(1, 2)  # B x Ch x T
         x = self.feature_extractor(x)  # B x Co x T
 
         if tcn_output:
             return x.transpose(1, 2)
 
-        # --- Tendência ---
+        # Extração de tendência (código original)
+        trend = []
+        for idx, mod in enumerate(self.tfd):
+            out = mod(x)  # b d t
+            if self.kernels[idx] != 1:
+                out = out[..., :-(self.kernels[idx] - 1)]
+            trend.append(out.transpose(1, 2))  # b t d
+        trend = reduce(
+            rearrange(trend, 'list b t d -> list b t d'),
+            'list b t d -> b t d', 'mean'
+        )
+        
+        # NOVO: Refinamento da tendência com Transformer
+        if self.use_transformer:
+            # Aplicar Transformer para refinar a tendência
+            refined_trend, attention_weights = self.trend_transformer(trend)
+            trend = refined_trend
+
+        # Extração de sazonalidade (código original)
+        x = x.transpose(1, 2)  # B x T x Co
+        season = []
+        for mod in self.sfd:
+            out = mod(x)  # b t d
+            season.append(out)
+        season = season[0]
+
+        return trend, self.repr_dropout(season)
+    
+    def get_attention_weights(self, x, mask='all_true'):
+        """
+        Método adicional para obter pesos de atenção do Transformer
+        """
+        if not self.use_transformer:
+            return None
+            
+        # Forward pass até a tendência
+        nan_mask = ~x.isnan().any(axis=-1)
+        x[~nan_mask] = 0
+        x = self.input_fc(x)
+
+        if mask == 'all_true':
+            mask = x.new_full((x.size(0), x.size(1)), True, dtype=torch.bool)
+        mask &= nan_mask
+        x[~mask] = 0
+
+        x = x.transpose(1, 2)
+        x = self.feature_extractor(x)
+
         trend = []
         for idx, mod in enumerate(self.tfd):
             out = mod(x)
             if self.kernels[idx] != 1:
                 out = out[..., :-(self.kernels[idx] - 1)]
-            trend.append(out.transpose(1, 2))  # B x T x D
+            trend.append(out.transpose(1, 2))
         trend = reduce(
             rearrange(trend, 'list b t d -> list b t d'),
             'list b t d -> b t d', 'mean'
         )
-
-        # Transformer na tendência
-        trend = self.trend_transformer(trend)[0]
-
-        # --- Sazonalidade ---
-        x = x.transpose(1, 2)  # B x T x D
-        season = self.sfd[0](x)
-
-        return trend, self.repr_dropout(season)
+        
+        # Obter pesos de atenção
+        return self.trend_transformer.get_attention_weights(trend)
