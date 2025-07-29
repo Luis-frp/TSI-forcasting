@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-"""
-Melhorias para Extração de Tendência no TSI
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

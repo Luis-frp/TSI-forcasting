@@ -42,6 +42,19 @@ if __name__ == '__main__':
 
     parser.add_argument('--kernels', type=int, nargs='+', default=[1, 2, 4, 8, 16, 32, 64, 128], help='The kernel sizes used in the mixture of AR expert layers')
     parser.add_argument('--alpha', type=float, default=0.0005, help='Weighting hyperparameter for loss function')
+    
+    # Argumentos para refinador Transformer
+    parser.add_argument('--use-transformer-refiner', action='store_true', default=True, help='Use Transformer as refiner after dilated convolutions')
+    parser.add_argument('--no-use-transformer-refiner', dest='use_transformer_refiner', action='store_false', help='Disable Transformer refiner')
+    parser.add_argument('--transformer-type', type=str, default='temporal', choices=['temporal', 'informer'], help='Type of transformer: temporal or informer')
+    parser.add_argument('--transformer-heads', type=int, default=4, help='Number of attention heads in Transformer refiner (defaults to 4)')
+    parser.add_argument('--transformer-depth', type=int, default=2, help='Number of Transformer encoder layers in refiner (defaults to 2)')
+    parser.add_argument('--transformer-dropout', type=float, default=0.1, help='Dropout rate for Transformer refiner (defaults to 0.1)')
+    parser.add_argument('--informer-factor', type=int, default=5, help='Factor for ProbSparse attention in Informer (defaults to 5)')
+    parser.add_argument('--informer-distil', action='store_true', default=True, help='Enable distilling operation in Informer')
+    parser.add_argument('--no-informer-distil', dest='informer_distil', action='store_false', help='Disable distilling operation in Informer')
+
+    
 
     args = parser.parse_args()
 
@@ -73,6 +86,14 @@ if __name__ == '__main__':
         batch_size=args.batch_size,
         lr=args.lr,
         output_dims=args.repr_dims,
+        # Parâmetros do Transformer refinador
+        use_transformer_refiner=args.use_transformer_refiner,
+        transformer_type=args.transformer_type,
+        transformer_heads=args.transformer_heads,
+        transformer_depth=args.transformer_depth,
+        transformer_dropout=args.transformer_dropout,
+        informer_factor=args.informer_factor,
+        informer_distil=args.informer_distil,
     )
     
     if args.save_every is not None:
@@ -93,15 +114,6 @@ if __name__ == '__main__':
         device=device,
         **config
     )
-
-    # model = TSI_Modificado(
-    #         input_dims=train_data.shape[-1],
-    #         kernels=args.kernels,
-    #         alpha=args.alpha,
-    #         max_train_length=args.max_train_length,
-    #         device=device,
-    #         **config
-    #     )
 
     loss_log = model.fit(
         train_data,

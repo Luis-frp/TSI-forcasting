@@ -196,7 +196,6 @@ class TSIModel(nn.Module):
         ptr = (ptr + batch_size) % self.K
         self.queue_ptr[0] = ptr
 
-
 class TSI:
     def __init__(self,
                  input_dims: int,
@@ -206,11 +205,19 @@ class TSI:
                  output_dims: int = 320,
                  hidden_dims: int = 64,
                  depth: int = 10,
-                 device: 'str' ='cuda',
+                 device: str = 'cuda',
                  lr: float = 0.001,
                  batch_size: int = 16,
                  after_iter_callback: Union[Callable, None] = None,
-                 after_epoch_callback: Union[Callable, None] = None):
+                 after_epoch_callback: Union[Callable, None] = None,
+                 # Parâmetros para refinador Transformer
+                 use_transformer_refiner: bool = True,
+                 transformer_type: str = 'temporal',  # 'temporal' ou 'informer'
+                 transformer_heads: int = 4,
+                 transformer_depth: int = 2,
+                 transformer_dropout: float = 0.1,
+                 informer_factor: int = 5,
+                 informer_distil: bool = True):
 
         super().__init__()
         self.input_dims = input_dims
@@ -220,15 +227,27 @@ class TSI:
         self.lr = lr
         self.batch_size = batch_size
         self.max_train_length = max_train_length
+        self.use_transformer_refiner = use_transformer_refiner
+        self.transformer_type = transformer_type
 
         if kernels is None:
             kernels = []
 
+        # Usar encoder híbrido com opção Informer
         self.net = TSIEncoder(
-            input_dims=input_dims, output_dims=output_dims,
+            input_dims=input_dims, 
+            output_dims=output_dims,
             kernels=kernels,
             length=max_train_length,
-            hidden_dims=hidden_dims, depth=depth,
+            hidden_dims=hidden_dims, 
+            depth=depth,
+            use_transformer_refiner=use_transformer_refiner,
+            transformer_type=transformer_type,
+            transformer_heads=transformer_heads,
+            transformer_depth=transformer_depth,
+            transformer_dropout=transformer_dropout,
+            informer_factor=informer_factor,
+            informer_distil=informer_distil
         ).to(self.device)
 
         self.tsi = TSIModel(
@@ -330,10 +349,8 @@ class TSI:
         return loss_log
     
     def _eval_with_pooling(self, x, mask=None, slicing=None, encoding_window=None):
-        out_t, out_s = self.net(x.to(self.device, non_blocking=True))  # l b t d
-        out = torch.cat([out_t[:, -1], out_s[:, -1]], dim=-1) # 原代码
-        #out = out_t[:, -1] # 消融实验
-        #out = out_s[:, -1]
+        out_t, out_s = self.net(x.to(self.device, non_blocking=True))
+        out = torch.cat([out_t[:, -1], out_s[:, -1]], dim=-1)
         return rearrange(out.cpu(), 'b d -> b () d')
     
     def encode(self, data, mode, mask=None, encoding_window=None, casual=False, sliding_length=None, sliding_padding=0, batch_size=None):
@@ -439,86 +456,18 @@ class TSI:
         state_dict = torch.load(fn, map_location=self.device)
         self.net.load_state_dict(state_dict)
 
-
-class TSIWithTransformer(TSI):
-    """
-    Versão do TSI com Transformer para refinamento da tendência.
-    Mantém total compatibilidade com a versão original.
-    """
-    
-    def __init__(self,
-                 input_dims: int,
-                 kernels: List[int],
-                 alpha: bool,
-                 max_train_length: int,
-                 output_dims: int = 320,
-                 hidden_dims: int = 64,
-                 depth: int = 10,
-                 device: str = 'cuda',
-                 lr: float = 0.001,
-                 batch_size: int = 16,
-                 after_iter_callback: Union[Callable, None] = None,
-                 after_epoch_callback: Union[Callable, None] = None,
-                 # Novos parâmetros para o Transformer
-                 use_transformer: bool = True,
-                 transformer_heads: int = 4,
-                 transformer_depth: int = 2,
-                 transformer_dropout: float = 0.1):
-        
-        # Inicialização da classe pai com encoder modificado
-        self.input_dims = input_dims
-        self.output_dims = output_dims
-        self.hidden_dims = hidden_dims
-        self.device = device
-        self.lr = lr
-        self.batch_size = batch_size
-        self.max_train_length = max_train_length
-        self.use_transformer = use_transformer
-
-        if kernels is None:
-            kernels = []
-
-        # Usar o novo encoder com Transformer
-        self.net = TSIEncoderWithTransformer(
-            input_dims=input_dims, 
-            output_dims=output_dims,
-            kernels=kernels,
-            length=max_train_length,
-            hidden_dims=hidden_dims, 
-            depth=depth,
-            use_transformer=use_transformer,
-            transformer_heads=transformer_heads,
-            transformer_depth=transformer_depth,
-            transformer_dropout=transformer_dropout
-        ).to(self.device)
-
-        self.tsi = TSIModel(
-            self.net,
-            copy.deepcopy(self.net),
-            kernels=kernels,
-            dim=self.net.component_dims,
-            alpha=alpha,
-            K=256,
-            device=self.device,
-        ).to(self.device)
-
-        self.after_iter_callback = after_iter_callback
-        self.after_epoch_callback = after_epoch_callback
-        
-        self.n_epochs = 0
-        self.n_iters = 0
-    
     def get_attention_weights(self, data):
         """
-        Método para obter pesos de atenção do Transformer na tendência
+        Método para obter pesos de atenção do Transformer refinador.
         
         Args:
-            data: dados de entrada (numpy array ou tensor)
+            data: dados de entrada (numpy array)
             
         Returns:
-            attention_weights: pesos de atenção de cada camada do Transformer
+            attention_weights: pesos de atenção (se Transformer estiver habilitado)
         """
-        if not self.use_transformer:
+        if not self.use_transformer_refiner:
+            print(f"Transformer refinador ({self.transformer_type}) não está habilitado. Use use_transformer_refiner=True na inicialização.")
             return None
             
         if isinstance(data, np.ndarray):
@@ -529,30 +478,6 @@ class TSIWithTransformer(TSI):
             attention_weights = self.net.get_attention_weights(data)
         
         return attention_weights
-    
-    def analyze_trend_attention(self, data, save_path=None):
-        """
-        Análise e visualização dos pesos de atenção na tendência
-        
-        Args:
-            data: dados para análise
-            save_path: caminho para salvar visualizações (opcional)
-        """
-        attention_weights = self.get_attention_weights(data)
-        
-        if attention_weights is None:
-            print("Transformer não está habilitado.")
-            return
-        
-        print(f"Obtidos pesos de atenção de {len(attention_weights)} camadas do Transformer")
-        
-        # Análise básica
-        for i, weights in enumerate(attention_weights):
-            print(f"Camada {i+1}: Shape = {weights.shape}")
-            # weights shape: (batch, heads, seq_len, seq_len)
-            
-        return attention_weights
-
 
 def adjust_learning_rate(optimizer, lr, epoch, epochs):
     """Decay the learning rate based on schedule"""

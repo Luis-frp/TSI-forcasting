@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-"""
-Extrator de Tendência Inspirado em Wavelets - Versão Simplificada
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -111,37 +106,3 @@ def create_wavelet_trend_extractor(input_dims, output_dims, kernels):
     """
     return WaveletTrendExtractor(input_dims, output_dims, kernels)
 
-
-# Teste rápido
-if __name__ == "__main__":
-    print("🌊 Wavelet Trend Extractor - Teste")
-    print("=" * 40)
-    
-    # Parâmetros de teste
-    batch_size = 4
-    seq_len = 201
-    input_dims = 64
-    output_dims = 32
-    kernels = [1, 3, 5, 7]
-    
-    # Criar dados de teste
-    x = torch.randn(batch_size, input_dims, seq_len)
-    
-    # Criar extrator
-    extractor = create_wavelet_trend_extractor(input_dims, output_dims, kernels)
-    
-    print(f"📊 Parâmetros: {sum(p.numel() for p in extractor.parameters()):,}")
-    
-    # Teste forward
-    with torch.no_grad():
-        trend = extractor(x)
-    
-    print(f"✅ Input shape: {x.shape}")
-    print(f"✅ Output shape: {trend.shape}")
-    print(f"✅ Funcionando perfeitamente!")
-    
-    print("\n🎯 Vantagens do Wavelet:")
-    print("   • Separação real de frequências")
-    print("   • Remove ruído automaticamente") 
-    print("   • Preserva tendências suaves")
-    print("   • Inspiração matemática sólida")
